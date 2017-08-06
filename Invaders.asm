@@ -16,21 +16,34 @@ rti		; F|NisH3D!
 ;--------------------------------------
 Start:
  InitSNES
+ 
+; set up a clone of OAM for direct manipulation, 
+; then we'll just DMA it over every frame
+rep #%00110000 ; 16 bit abxy
+ldx #0 ; loop index
+lda #$01 ; gonna set every sprite's X position to 1
+_offscreen;
+sta $1000, x ; mem addr for OAM copy starts at $1000 
+.rept 4 ; get to the next OAM entry
+inx 
+.endr
+cpx #$0200 ; size of low table of OAM
+bne _offscreen;
+
+lda #$5555  ; high table value - set all X values to negative
+_xmsb:
+sta $1000, X
+inx
+inx
+cpx #$0220 ; end of high table of OAM
+bne _xmsb
+ 
 rep #%00010000	;16 bit xy
 sep #%00100000	;8 bit ab
 
-; load up palettes
-;ldx #$0000
-;- 
-;lda InvadersPalettes.l,x
-;sta $2122
-;inx
-;cpx #512
-;bne -
-
 ; load up palettes on DMA 0
-ldx #InvadersPalettes
-lda #:InvadersPalettes
+ldx #Invaders_16_colorPalettes
+lda #:Invaders_16_colorPalettes
 ldy #(2 * 256) ; all the colors
 stx $4302
 sta $4304
@@ -42,9 +55,9 @@ sta $4301
 stz $2121 ; start writing palette data at first color in CGRAM
 
 ; load up tile character data on DMA 1
-ldx #InvadersTiles	; Address
-lda #:InvadersTiles	; of UntitledData
-ldy #(16*16*2)	; length of data
+ldx #Invaders_16_colorTiles	; Address
+lda #:Invaders_16_colorTiles	; of UntitledData
+ldy #(16*16*4)	; length of data
 stx $4312	; write
 sta $4314	; address
 sty $4315	; and length
@@ -55,9 +68,10 @@ sta $4311	; set destination
 ldy #$0000	; Write to VRAM from $0000
 sty $2116
 
-
+; start the DMA processes
 lda #%00000011	; start DMA, channels 0 + 1
 sta $420B
+
 lda #%10000000	; VRAM writing mode
 sta $2115
 
@@ -66,7 +80,7 @@ ldx #$4000	; write to vram
 stx $2116	; from $4000
 .rept 32
 	.rept 32
-	ldx #28
+	ldx #3
 	stx $2118
 	.endr
 .endr
@@ -76,7 +90,7 @@ ldx #$6000	; BG2 will start here
 stx $2116
 .rept 32
 	.rept 32
-	ldx #28
+	ldx #3
 	stx $2118
 	.endr
 .endr
@@ -86,13 +100,13 @@ ldx #$7000	; BG3 will start here
 stx $2116
 .rept 32
 	.rept 32
-	ldx #28
+	ldx #3
 	stx $2118
 	.endr
 .endr
 
 ;set up the screen
-lda #%00000000	; 8x8 tiles, mode 0
+lda #%00000001	; 8x8 tiles, mode 1
 sta $2105	; screen mode register
 lda #%01000000	; data starts from $4000
 sta $2107	; for BG1
@@ -104,10 +118,10 @@ sta $2109   ; for BG 3
 stz $210B	; BG1 and BG2 use the $0000 tiles
 ;stz $210C ; so do BG 3 and 4
 
-lda #%00000011	; enable bg1&2&3
+lda #%00010011	; enable bg1&2 AND SPRITES ZOMG
 sta $212C ; main screen
 lda #0
-sta $212D ; enabe nothing for sub screen?
+sta $212D ; enable nothing for sub screen?
 
 ;The PPU doesn't process the top line, so we scroll down 1 line.
 rep #$20        ; 16bit a
@@ -135,51 +149,86 @@ sta $2100
 lda #%10000001	; enable NMI and joypads
 sta $4200
 
+; BREAKPOINT 3
+pha
+lda $1339
+pla
 
 
-forever:
-wai
+; TESTING - initialize everything to sane values
+rep #%00100000 ; 16 bit A
+lda #$0000 ; clear A
+sep #%00100000 ; 8 bit A
 
-; implement game here lol
-
-; testing - put player sprite in middleish
+; put player sprite in middleish
 lda #128
 sta $0017
 
-; rep #%00010000	;16 bit xy
-sep #%00110000	;8 bit ab xy
+; put invaders x / y 
+lda #40
+sta $0015 ; X coord
+lda #50
+sta $0016 ; Y coord
+
+; put invaders on/off flag in mem
+lda #$FF ; gonna put FF in every byte - struct is 2 bytes per row, 10 rows, 
+         ; each word high / low byte is a bit array of whether a given 
+		 ; invader is dead.  E.g.:
+		 ; #%00000011 11110000 - dead invaders in positions 0,1,2,3.  
+ldx #$0000 ; loop through the 20 bytes
+-
+sta $0000,x ; invaders status table stored at beginning of mem
+inx
+cpx #$14
+bne -
+
+; DONE TESTING
+
+; initialize player sprite
+lda #200  ; y position in sprite 1
+sta $1001  
+lda #4    ; set tile # for player sprite
+sta $1002
+lda #%00100000 ; sprite priority
+sta $1003
+lda #%01010110 ; set 16x16 sprite, no X MSB
+sta $1200
+
+forever:
+wai
+; start main loop
+
+; implement game here lol
+rep #%00110000	; 16 bit a
+lda #$0000 ; clear a
+sep #%00100000	;8 bit ab 16 bit xy
 
 ; position player sprite
-lda $0017 ; x position of player sprite, ram
-stz $2102 ; player sprite is 0 is OAM
-stz $2103 ; OAM low table 
-sta $2104 ; store x pos in OAM
+lda $0017 ; x position in sprite 1
+sta $1000 
 
-lda #1 ; OAM addr y position
-sta $2102
-sta $2103
-lda #200;
-sta $2104;
+; DMA over the OAM table on channel 0
+; copy entire OAM - start OAM addr at 0
+stz $2102
+stz $2103  
 
-lda #2 ; OAM addr player sprite info
-sta $2102
-stz $2103 
-lda #4 ; first player sprite tile
-sta $2104
+lda #$00 
+sta $4300 ; DMA write mode - 1 register, write once
+lda #$04
+sta $4301 ; DMA destination address 2104 - VRAM data write
 
-lda #3 ; OAM 4th byte player sprite info
-sta $2102
-stz $2103
-lda #%00000100 ; set sprite's priority above BG 1/2
-sta $2104;
+ldx #$1000 ; source address
+stx $4302
+lda #$7E ; bank address
+sta $4304 
 
-; player sprite high table - set 16x16 sprite
-stz $2102;
-lda #1
-sta $2103;
-lda #2 ; 16x16 size for sprite 0
-sta $2104;
+ldx #$0220 ; size of OAM table
+stx $4305
 
+lda #$01 ; do the DMA 
+sta $420B
+
+; end main loop
 jmp forever
 
 ;--------------------------------------
@@ -188,5 +237,5 @@ jmp forever
 .bank 1 slot 0		; We'll use bank 1
 .org 0
 .section "Tiledata"
-.include "Invaders.inc"	
+.include "Invaders_16_color.inc"	
 .ends
