@@ -139,23 +139,7 @@ xba
 sta $2110
 ; done scrolling
 
-; set up sprite table data
-lda #0 ; 8x8 and 16x16 sprites, sprite chr data at $0 in VRAM
-sta $2102
-
-lda #%00001111	; enable screen, set brightness to 15
-sta $2100
-
-lda #%10000001	; enable NMI and joypads
-sta $4200
-
-; BREAKPOINT 3
-pha
-lda $1339
-pla
-
-
-; TESTING - initialize everything to sane values
+; GAME INIT - initialize game RAM to sane values
 rep #%00100000 ; 16 bit A
 lda #$0000 ; clear A
 sep #%00100000 ; 8 bit A
@@ -182,8 +166,6 @@ inx
 cpx #$14
 bne -
 
-; DONE TESTING
-
 ; initialize player sprite
 lda #200  ; y position in sprite 1
 sta $1001  
@@ -193,6 +175,17 @@ lda #%00100000 ; sprite priority
 sta $1003
 lda #%01010110 ; set 16x16 sprite, no X MSB
 sta $1200
+
+; set up sprite table data
+lda #0 ; 8x8 and 16x16 sprites, sprite chr data at $0 in VRAM
+sta $2102
+
+; all done set up!
+lda #%00001111	; enable screen, set brightness to 15
+sta $2100
+
+lda #%10000001	; enable NMI and joypads
+sta $4200
 
 forever:
 wai
@@ -227,6 +220,81 @@ stx $4305
 
 lda #$01 ; do the DMA 
 sta $420B
+
+; set up invaders BG
+rep #%00110000 ; 16 bit abxy
+
+lda #%10000000	; VRAM writing mode; increment address each write
+sta $2115
+ldx #$6000	; write to vram
+stx $2116	; from $6000
+
+ldx #0;
+LoopX:
+ldy #0;
+
+; calc offset in BG 2 VRAM 
+txa ; load up x into accumulator
+.rept 6  ; multiply row by the 32 tiles on that row * 2 for a spacer row
+asl 
+.endr
+sta $0018 ; tmp
+
+LoopY:
+; calculate the bitmask for this index
+lda #1;
+phy ; store col index
+LoopBitmask:
+	cpy #0 ; loop - shift left Y times
+	beq DoneCalcBitmask
+	asl
+	dey
+	bra LoopBitmask
+DoneCalcBitmask
+ply ; restore current col index
+pha ; store a for use as bitmask cmp later
+
+tya ; load up y into accumulator
+adc #2 ; add 3 to y - starting column offset
+
+; multiple by 2
+sta $0020 ; tmp 2
+adc $0020
+
+adc $0018 ; add back the x row offset we determined
+adc #$6000 ; offset from $6000
+sta $2116 ; set VRAM writing address
+
+pla ; a now has our bitmask
+and $0000, x ; mask accumulator with the row we're doing in memory
+cmp #0
+
+beq InvaderDead ; check if invader alive; 1 alive 0 dead
+
+; Invader alive
+lda #16
+sta $2118 ; write this invader
+lda #3    ; write the spacer bits
+sta $2118 
+bra DoneInvader
+
+InvaderDead:
+; Invader dead
+lda #3    ; write the spacer bits
+sta $2118 
+sta $2118
+
+DoneInvader:
+iny
+cpy #10 ; loop column index while not done
+bne LoopY
+
+inx
+cpx #10 ; loop row index while not done
+bne LoopX
+
+; set the horizontal / vertical scroll for bg 2
+
 
 ; end main loop
 jmp forever
