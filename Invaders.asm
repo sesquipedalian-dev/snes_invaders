@@ -140,7 +140,7 @@ sta $2110
 ; done scrolling
 
 ; GAME INIT - initialize game RAM to sane values
-rep #%00100000 ; 16 bit A
+rep #%00110000 ; 16 bit A
 lda #$0000 ; clear A
 sep #%00100000 ; 8 bit A
 
@@ -165,6 +165,23 @@ sta $0000,x ; invaders status table stored at beginning of mem
 inx
 cpx #$14
 bne -
+
+; initialize BG 2 VRAM copy to blank
+rep #%00110000 ; 16 bit axy
+ldx #0
+-
+;lda #$2003 ; blank tile; priority bit set
+lda #$0003 ; blank tile
+sta $1300, x
+cpx #$0800
+inx
+bne -
+lda #$0000 ; clear a
+sep #%00100000 ; 8 bit ab
+
+phx
+ldx $1337
+plx
 
 ; initialize player sprite
 lda #200  ; y position in sprite 1
@@ -200,34 +217,28 @@ sep #%00100000	;8 bit ab 16 bit xy
 lda $0017 ; x position in sprite 1
 sta $1000 
 
-; DMA over the OAM table on channel 0
-; copy entire OAM - start OAM addr at 0
-stz $2102
-stz $2103  
+; loop player sprite animation?
+lda $1002
+lsr
+sec
+sbc #2
+; a is now 0, 1, or 2
+clc
+adc #1
+; loop back to 0 if over 2
+cmp #3
+bne +
+lda #0
++
+; a is now incremented and between 0 and 2.  Convert it back to real value
+clc
+adc #2
+asl 
+sta $1002
 
-lda #$00 
-sta $4300 ; DMA write mode - 1 register, write once
-lda #$04
-sta $4301 ; DMA destination address 2104 - VRAM data write
-
-ldx #$1000 ; source address
-stx $4302
-lda #$7E ; bank address
-sta $4304 
-
-ldx #$0220 ; size of OAM table
-stx $4305
-
-lda #$01 ; do the DMA 
-sta $420B
 
 ; set up invaders BG
 rep #%00110000 ; 16 bit abxy
-
-lda #%10000000	; VRAM writing mode; increment address each write
-sta $2115
-ldx #$6000	; write to vram
-stx $2116	; from $6000
 
 ldx #0;
 LoopX:
@@ -257,13 +268,14 @@ pha ; store a for use as bitmask cmp later
 tya ; load up y into accumulator
 adc #2 ; add 3 to y - starting column offset
 
-; multiple by 2
-sta $0020 ; tmp 2
-adc $0020
+asl ; multiple by 2
 
 adc $0018 ; add back the x row offset we determined
-adc #$6000 ; offset from $6000
-sta $2116 ; set VRAM writing address
+asl ; multiple by 2 to get from word address to byte address 
+adc #$1300 ; offset from $1300 - working mem address 
+sta $0020 ; store off a for use as write address 
+
+;sta $2116 ; set VRAM writing address
 
 pla ; a now has our bitmask
 and $0000, x ; mask accumulator with the row we're doing in memory
@@ -272,17 +284,23 @@ cmp #0
 beq InvaderDead ; check if invader alive; 1 alive 0 dead
 
 ; Invader alive
+phx
+ldx $0020; load write address 
 lda #16
-sta $2118 ; write this invader
+sta $0000, x
 lda #3    ; write the spacer bits
-sta $2118 
+sta $0002, x
+plx
 bra DoneInvader
 
 InvaderDead:
 ; Invader dead
+phx
+ldx $0020
 lda #3    ; write the spacer bits
-sta $2118 
-sta $2118
+sta $0000, x
+sta $0002, x
+plx
 
 DoneInvader:
 iny
@@ -295,6 +313,61 @@ bne LoopX
 
 ; set the horizontal / vertical scroll for bg 2
 
+
+rep #%00110000	; 16 bit a
+lda #$0000 ; clear a
+sep #%00100000	;8 bit ab 16 bit xy
+
+; DMA over the OAM table on channel 0
+; copy entire OAM - start OAM addr at 0
+stz $2102
+stz $2103  
+
+lda #$00 
+sta $4300 ; DMA write mode - 1 register, write once
+lda #$04
+sta $4301 ; DMA destination address 2104 - OAM data write
+
+ldx #$1000 ; source address
+stx $4302
+lda #$7E ; bank address
+sta $4304 
+
+ldx #$0220 ; size of OAM table
+stx $4305
+
+; copy BG 2 tileset data on channel 1
+
+lda #$80 ; VRAM write mode - write words
+sta $2115
+ldx #$6000
+stx $2116 ; set VRAM write address
+
+lda #$01
+sta $4310 ; DMA write mode - word increment
+lda #$18 
+sta $4311 ; DMA destination address 2118 -  VRAM write
+
+ldx #$1300 ; source address
+stx $4312 
+lda #$7E ; bank address
+sta $4314
+
+ldx #$0800 ; size of BG 2 tileset data
+stx $4315
+;ldx #$00FF
+;stx $4315
+
+; force v-blank? 
+;lda #%10000000
+;sta $2100
+
+lda #%00000001 ; do the DMA 
+sta $420B
+
+; end forced v-blank?
+;lda #%00001111
+;sta $2100
 
 ; end main loop
 jmp forever
